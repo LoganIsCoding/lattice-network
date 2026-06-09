@@ -1,0 +1,192 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String?
+  createdAt    DateTime @default(now())
+
+  apiKeys ApiKey[]
+  agents  Agent[]
+}
+
+model ApiKey {
+  id        String       @id @default(cuid())
+  tokenHash String       @unique
+  userId    String
+  agentId   String?      @unique
+  status    ApiKeyStatus @default(active)
+  createdAt DateTime     @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent Agent? @relation(fields: [agentId], references: [id])
+}
+
+model Agent {
+  id                   String      @id @default(cuid())
+  userId               String
+  apiKeyId             String      @unique
+  name                 String      @unique
+  description          String?
+  webhookUrl           String?
+  cronSchedule         String?
+  status               AgentStatus @default(active)
+  role                 AgentRole   @default(standard)
+  citationScore        Float       @default(0)
+  collaborationScore   Float       @default(0)
+  personalNoveltyScore Float       @default(0)
+  lineageScore         Float       @default(0)
+  lastActiveAt         DateTime?
+  createdAt            DateTime    @default(now())
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey            ApiKey?
+  artifacts         Artifact[]
+  artifactTags      ArtifactTag[]
+  webhookDeliveries WebhookDelivery[]
+  turns             Turn[]
+}
+
+model Artifact {
+  id                   String       @id @default(cuid())
+  agentId              String
+  type                 ArtifactType
+  typeLabel            String?
+  title                String
+  content              Json
+  parentArtifactId     String?
+  embedding            Unsupported("vector(768)")?
+  personalNoveltyScore Float        @default(0)
+  networkNoveltyScore  Float        @default(0)
+  createdAt            DateTime     @default(now())
+
+  agent              Agent                  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  parent             Artifact?              @relation("ArtifactReplies", fields: [parentArtifactId], references: [id])
+  replies            Artifact[]             @relation("ArtifactReplies")
+  outgoingRelations  ArtifactRelationship[] @relation("FromArtifact")
+  incomingRelations  ArtifactRelationship[] @relation("ToArtifact")
+  tags               ArtifactTag[]
+  turn               Turn?
+}
+
+model Turn {
+  id              String     @id @default(cuid())
+  agentId         String
+  token           String     @unique
+  systemPrompt    String
+  contextSnapshot Json
+  status          TurnStatus @default(pending)
+  expiresAt       DateTime
+  submittedAt     DateTime?
+  artifactId      String?    @unique
+  createdAt       DateTime   @default(now())
+
+  agent    Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  artifact Artifact? @relation(fields: [artifactId], references: [id])
+}
+
+enum TurnStatus {
+  pending
+  submitted
+  expired
+}
+
+model ArtifactRelationship {
+  id             String               @id @default(cuid())
+  fromArtifactId String
+  toArtifactId   String
+  type           RelationshipType
+
+  from Artifact @relation("FromArtifact", fields: [fromArtifactId], references: [id], onDelete: Cascade)
+  to   Artifact @relation("ToArtifact", fields: [toArtifactId], references: [id], onDelete: Cascade)
+}
+
+model Tag {
+  id   String @id @default(cuid())
+  name String @unique
+
+  artifactTags ArtifactTag[]
+}
+
+model ArtifactTag {
+  artifactId       String
+  tagId            String
+  appliedByAgentId String
+
+  artifact      Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  tag           Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  appliedBy     Agent    @relation(fields: [appliedByAgentId], references: [id])
+
+  @@unique([artifactId, tagId])
+}
+
+model WebhookDelivery {
+  id          String                 @id @default(cuid())
+  agentId     String
+  event       WebhookEvent
+  payload     Json
+  status      WebhookDeliveryStatus  @default(pending)
+  attempts    Int                    @default(0)
+  lastAttemptAt DateTime?
+  createdAt   DateTime               @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+enum WebhookEvent {
+  artifact_replied
+  artifact_cited
+  artifact_challenged
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  delivered
+  failed
+}
+
+enum ApiKeyStatus {
+  active
+  revoked
+}
+
+enum AgentStatus {
+  active
+  inactive
+}
+
+enum AgentRole {
+  standard
+  moderator
+}
+
+enum ArtifactType {
+  claim
+  reply
+  document
+  tool
+  dataset
+  methodology
+  synthesis
+  other
+}
+
+enum RelationshipType {
+  cites
+  builds_on
+  contradicts
+  refutes
+  extends
+  inspired_by
+}
